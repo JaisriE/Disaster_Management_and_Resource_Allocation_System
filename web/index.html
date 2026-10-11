@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aruvi District Emergency Operations Console</title>
+  <meta name="description" content="Aruvi District Disaster Management Resource Allocation Console. Utilitarian emergency dispatch operations tool with deterministic priority queue, Dijkstra shortest paths, and transactional MySQL persistence.">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Top Console Header Bar -->
+  <header class="console-header">
+    <div class="top-bar">
+      <div class="brand-title">
+        <h1>Aruvi District Emergency Operations Console</h1>
+      </div>
+
+      <div class="top-actions">
+        <div class="connection-status" title="Connected to MySQL 8 via JDBC">
+          <span class="marker marker-green"></span>
+          <span>DB: CONNECTED</span>
+        </div>
+        <button id="btn-reset-demo" class="btn-reset-demo" onclick="App.resetDemoData()" title="Reset database to original seed state">
+          [RESET DEMO DATA]
+        </button>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs Bar -->
+    <nav class="tabs-strip" aria-label="Console Navigation">
+      <button class="tab-btn active" data-tab="pane-overview">Overview</button>
+      <button class="tab-btn" data-tab="pane-requests">
+        Reports <span class="tab-badge" id="badge-queue-count">0</span>
+      </button>
+      <button class="tab-btn" data-tab="pane-overview" data-scroll="priority-queue-section">Queue</button>
+      <button class="tab-btn" data-tab="pane-depots">Depots</button>
+      <button class="tab-btn" data-tab="pane-teams">Teams &amp; Shelters</button>
+      <button class="tab-btn" data-tab="pane-roads">Roads</button>
+      <button class="tab-btn" onclick="App.openTopRecommendation()">Recommendations</button>
+      <button class="tab-btn" data-tab="pane-allocations">History</button>
+      <button class="tab-btn" data-tab="pane-audits">Audit</button>
+      <button class="tab-btn" data-tab="pane-about">About</button>
+    </nav>
+  </header>
+
+  <!-- Main Console Work Area -->
+  <main class="console-main">
+
+    <!-- ============================================================== -->
+    <!-- PANE 1: OVERVIEW & TOPOLOGY -->
+    <!-- ============================================================== -->
+    <section class="tab-pane active" id="pane-overview">
+      
+      <!-- Summary Strip: Single Bordered Monospace Strip -->
+      <div class="summary-strip" aria-label="District Operational Summary">
+        <div class="summary-col">
+          <div class="summary-label">Pending Requests</div>
+          <div class="summary-num" id="kpi-pending">0</div>
+          <div class="summary-sub">AWAITING DISPATCH</div>
+        </div>
+
+        <div class="summary-col">
+          <div class="summary-label">Food Kits Available</div>
+          <div class="summary-num" id="kpi-food">0</div>
+          <div class="summary-sub">DEPOT RESERVES</div>
+        </div>
+
+        <div class="summary-col">
+          <div class="summary-label">Medicine Kits Available</div>
+          <div class="summary-num" id="kpi-med">0</div>
+          <div class="summary-sub">TRAUMA SUPPLIES</div>
+        </div>
+
+        <div class="summary-col">
+          <div class="summary-label">Rescue Teams Ready</div>
+          <div class="summary-num" id="kpi-teams">0 / 0</div>
+          <div class="summary-sub">STANDBY UNITS</div>
+        </div>
+
+        <div class="summary-col">
+          <div class="summary-label">Shelter Occupancy</div>
+          <div class="summary-num" id="kpi-shelter">0 / 0</div>
+          <div class="summary-sub" id="kpi-shelter-desc">RESERVED / CAPACITY</div>
+        </div>
+      </div>
+
+      <!-- Main Overview Grid: Map on Left, Queue Table on Right -->
+      <div class="overview-grid">
+        
+        <!-- Left Column: Transportation & Reachability Schematic Map -->
+        <div class="panel map-schematic-wrap">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">Transportation &amp; Reachability Network</h2>
+              <div class="panel-subtitle">Click road to toggle Open / Closed. Red path indicates Dijkstra optimal route.</div>
+            </div>
+          </div>
+
+          <!-- Neutral Legend in Bordered Box -->
+          <div class="map-legend-bar">
+            <span class="legend-chip"><span class="legend-box" style="background: #2b3a42;"></span> D1/D2 DEPOT</span>
+            <span class="legend-chip"><span class="legend-box" style="background: #ffffff; border-radius: 50%;"></span> VILLAGE</span>
+            <span class="legend-chip"><span class="legend-box" style="background: #ffffff; border: 2px solid #b3261e; border-radius: 50%;"></span> R10 ISOLATED</span>
+            <span class="legend-chip"><span class="legend-line" style="border-top-color: #374151;"></span> OPEN ROAD</span>
+            <span class="legend-chip"><span class="legend-line" style="border-top: 2px dashed #b3261e;"></span> CLOSED ROAD</span>
+            <span class="legend-chip"><span class="legend-line" style="border-top: 4px solid #b3261e;"></span> DIJKSTRA ROUTE</span>
+          </div>
+
+          <div class="map-svg-frame">
+            <svg id="topology-map-svg" class="map-svg" viewBox="0 0 860 480"></svg>
+          </div>
+        </div>
+
+        <!-- Right Column: Priority Queue Compact Ranked Table -->
+        <div class="panel" id="priority-queue-section">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">Priority Queue (Ranked)</h2>
+              <div class="panel-subtitle">Severity (desc) &gt; Population (desc) &gt; Arrival Order (asc)</div>
+            </div>
+            <button class="btn btn-outline btn-sm" onclick="App.openModal('modal-new-request')">
+              [+ NEW REPORT]
+            </button>
+          </div>
+
+          <div class="table-wrap" style="border: none; max-height: 520px; overflow-y: auto;">
+            <table class="dense-table">
+              <thead>
+                <tr>
+                  <th style="width: 45px;">Rank</th>
+                  <th style="width: 45px;">ID</th>
+                  <th>Region</th>
+                  <th>Sev</th>
+                  <th style="text-align: right;">Pop</th>
+                  <th>Status</th>
+                  <th style="text-align: right;">Action</th>
+                </tr>
+              </thead>
+              <tbody id="priority-queue-table-body">
+                <!-- Dynamically populated rows -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ============================================================== -->
+    <!-- PANE 2: REPORTS REGISTER TABLE -->
+    <!-- ============================================================== -->
+    <section class="tab-pane" id="pane-requests">
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Incident Reports Register</h2>
+            <div class="panel-subtitle">All active, allocated, rejected and cancelled emergency incident reports</div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-new-request')">
+            [+ LOG INCIDENT REPORT]
+          </button>
+        </div>
+
+        <div class="table-wrap" style="border: none;">
+          <table class="dense-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Region</th>
+                <th>Sev</th>
+                <th style="text-align: right;">Population</th>
+                <th>Type</th>
+                <th>Demands &amp; Outstanding</th>
+                <th>Arrival Seq</th>
+                <th>Status</th>
+                <th style="text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="requests-table-body">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================== -->
+    <!-- PANE 3: DEPOTS INVENTORY TABLE -->
+    <!-- ============================================================== -->
+    <section class="tab-pane" id="pane-depots">
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Resource Depots &amp; Stock Inventory</h2>
+            <div class="panel-subtitle">Central supply depots holding emergency survival and trauma care stock</div>
+          </div>
+        </div>
+
+        <div class="table-wrap" style="border: none;">
+          <table class="dense-table">
+            <thead>
+              <tr>
+                <th>Depot ID</th>
+                <th>Depot Name</th>
+                <th>Location Region</th>
+                <th style="text-align: right;">Food Kits</th>
+                <th style="text-align: right;">Medicine Kits</th>
+                <th style="text-align: right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="depots-table-body">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <!-- Backward compatible hidden grid for JS calls -->
+      <div id="depots-grid" style="display: none;"></div>
+    </section>
+
+    <!-- ============================================================== -->
+    <!-- PANE 4: TEAMS & SHELTERS TABLES -->
+    <!-- ============================================================== -->
+    <section class="tab-pane" id="pane-teams">
+      <div class="panel" style="margin-bottom: var(--space-4);">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Emergency Rescue Response Teams</h2>
+            <div class="panel-subtitle">Mobile response units deployed for flood extraction and search operations</div>
+          </div>
+        </div>
+
+        <div class="table-wrap" style="border: none;">
+          <table class="dense-table">
+            <thead>
+              <tr>
+                <th>Team ID</th>
+                <th>Team Name</th>
+                <th>Home Base Depot</th>
+                <th>Current Mission</th>
+                <th>Status</th>
+                <th style="text-align: right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="teams-table-body">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Evacuation Relief Shelters</h2>
+            <div class="panel-subtitle">Designated storm shelters providing safe accommodation and meals</div>
+          </div>
+        </div>
+
+        <div class="table-wrap" style="border: none;">
+          <table class="dense-table">
+            <thead>
+              <tr>
+                <th>Shelter ID</th>
+                <th>Shelter Name</th>
+                <th>Region</th>
+                <th style="text-align: right;">Capacity</th>
+                <th style="text-align: right;">Reserved</th>
+                <th style="text-align: right;">Available</th>
+                <th style="text-align: right;">Occupancy %</th>
+                <th style="text-align: right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="shelters-table-body">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <!-- Backward compatible hidden containers -->
+      <div id="teams-grid" style="display: none;"></div>
+      <div id="shelters-grid" style="display: none;"></div>
+    </section>
+
+    <!-- ============================================================== -->
+    <!-- PANE 5: ROAD NETWORK INFRASTRUCTURE TABLE -->
+    <!-- ============================================================== -->
+    <section class="tab-pane" id="pane-roads">
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Road Infrastructure &amp; Damage Status</h2>
+            <div class="panel-subtitle">Weighted graph connections. Modifying state triggers immediate BFS reachability &amp; Dijkstra recalculation.</div>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="App.openModal('modal-add-road')">
+            [+ ADD ROAD CONNECTION]
+          </button>
+        </div>
+
+        <div class="table-wrap" style="border: none;">
+          <table class="dense-table">
+            <thead>
+              <tr>
+                <th>Road ID</th>
+                <th>From Region</th>
+                <th>To Region</th>
+                <th style="text-align: right;">Travel Time</th>
+                <th>Status</th>
+                <th>Route Description</th>
+                <th style="text-align: right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="roads-table-body">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================== -->
+    <!-- PANE 6: ALLOCATION HISTORY TABLE -->
+    <!-- ============================================================== -->
+    <section class="tab-pane" id="pane-allocations">
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Historical Confirmed Allocations</h2>
+            <div class="panel-subtitle">Permanent record of human-officer authorized resource deductions committed to MySQL</div>
+          </div>
+        </div>
+
+        <div class="table-wrap" style="border: none;">
+          <table class="dense-table">
+            <thead>
+              <tr>
+                <th>Alloc ID</th>
+                <th>Req ID</th>
+                <th>Assigned Unit / Facility</th>
+                <th>Resources Allocated</th>
+                <th style="text-align: right;">Travel Time</th>
+                <th>Route Taken</th>
+                <th>Authorizing Officer</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody id="allocations-table-body">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================== -->
+    <!-- PANE 7: OPERATIONAL AUDIT TRAIL TABLE -->
+    <!-- ============================================================== -->
+    <section class="tab-pane" id="pane-audits">
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">System Audit Log</h2>
+            <div class="panel-subtitle">Immutable chronological trail of all database transactions and operational events</div>
+          </div>
+        </div>
+
+        <div class="table-wrap" style="border: none;">
+          <table class="dense-table">
+            <thead>
+              <tr>
+                <th>Log ID</th>
+                <th>Event Type</th>
+                <th>Description</th>
+                <th>Performed By</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody id="audit-table-body">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================== -->
+    <!-- PANE 8: ABOUT THE SYSTEM -->
+    <!-- ============================================================== -->
+    <section class="tab-pane" id="pane-about">
+      
+      <!-- Section 1: About the System -->
+      <div class="panel" style="margin-bottom: var(--space-4);">
+        <div class="panel-header">
+          <h2 class="panel-title">About the System</h2>
+        </div>
+        <div class="panel-body" style="font-size: 12px; line-height: 1.6;">
+          This Disaster Management Resource Allocation System is an emergency control room platform engineered for the fictional Aruvi district during severe cyclone crises. It continuously prioritizes incoming incident reports, evaluates physical road reachability across flooded corridors, and recommends optimal allocations of food kits, medicine kits, rescue response teams, and shelter places. The core operational principle ensures that automation supports rather than replaces human command, requiring an authorized officer to confirm or reject every recommended allocation.
+        </div>
+      </div>
+
+      <!-- Section 2: The Problem It Solves -->
+      <div class="panel" style="margin-bottom: var(--space-4);">
+        <div class="panel-header">
+          <h2 class="panel-title">The Problem It Solves</h2>
+        </div>
+        <div class="panel-body" style="font-size: 12px; line-height: 1.6;">
+          <ul style="margin-left: 20px; display: flex; flex-direction: column; gap: 8px;">
+            <li><strong>Severe village neglect:</strong> Without systematic ranking, highly affected villages with critical casualties or large populations risk being overlooked in favor of first-come or less urgent calls.</li>
+            <li><strong>Conflicting promises &amp; race conditions:</strong> In a manual control room, two officers can inadvertently promise the same depot stock or the same rescue team to different locations, causing fatal shortages.</li>
+            <li><strong>Impassable road routing:</strong> Severe storm damage, broken bridges, and flooded highways can sever transit corridors; dispatching relief without real-time road validation leads to stranded convoys and wasted transit time.</li>
+            <li><strong>Static urgency in dynamic crises:</strong> New incident reports arrive continuously while conditions evolve; static queues fail to elevate newly critical reports above older, milder incidents.</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Section 3: How It Works -->
+      <div class="panel" style="margin-bottom: var(--space-4);">
+        <div class="panel-header">
+          <h2 class="panel-title">How It Works</h2>
+        </div>
+        <div class="panel-body" style="font-size: 12px; line-height: 1.6;">
+          <ol style="margin-left: 20px; display: flex; flex-direction: column; gap: 8px;">
+            <li><strong>Field Incident Entry:</strong> A field officer logs an incident report specifying affected region, severity (1 to 5), impacted population, and requested resources.</li>
+            <li><strong>Validation &amp; Persistence:</strong> The system validates input ranges (non-negative stock, positive population, valid ratings) and persists the report to MySQL.</li>
+            <li><strong>Deterministic Ranking:</strong> Requests are inserted into a priority queue ordered strictly by higher severity first, higher population on ties, and earlier arrival sequence as the final tie-breaker.</li>
+            <li><strong>Network &amp; Inventory Verification:</strong> The system evaluates transportation graph reachability using BFS and DFS, and calculates shortest travel times from staging depots using Dijkstra's algorithm.</li>
+            <li><strong>Algorithmic Recommendation:</strong> A deterministic allocation plan is generated, determining full or partial supply allocation and explicitly accounting for outstanding deficits.</li>
+            <li><strong>Officer Decision Authorization:</strong> A command officer inspects the recommended route and quantities, then explicitly confirms the allocation or rejects it with a mandatory reason.</li>
+            <li><strong>Transactional Database Update:</strong> Upon confirmation, inventory deductions, shelter reservations, team assignments, and audit logging are executed within an atomic ACID transaction.</li>
+            <li><strong>Automatic Re-Prioritization:</strong> Any subsequent state change (stock update, road closure or reopening, severity or population amendment) automatically re-evaluates and re-prioritizes all remaining waiting requests.</li>
+          </ol>
+        </div>
+      </div>
+
+      <!-- Section 4: Key Features -->
+      <div class="panel" style="margin-bottom: var(--space-4);">
+        <div class="panel-header">
+          <h2 class="panel-title">Key Features</h2>
+        </div>
+        <div class="panel-body" style="font-size: 12px; line-height: 1.6;">
+          <ul style="margin-left: 20px; display: flex; flex-direction: column; gap: 6px;">
+            <li>Deterministic priority queue ranking (Severity &gt; Population &gt; Arrival Order)</li>
+            <li>BFS and DFS transportation network reachability analysis to detect isolated communities</li>
+            <li>Dijkstra minimum-time route computation using min-heap priority structures</li>
+            <li>Partial allocation accounting with outstanding demand tracking</li>
+            <li>Strict non-negative resource inventory invariants preventing negative stock</li>
+            <li>Duplicate allocation prevention blocking repeat confirmations on fulfilled requests</li>
+            <li>Shelter overbooking safeguards enforcing physical capacity limits</li>
+            <li>Interactive road closure and reopening with immediate graph recalculation</li>
+            <li>Immutable operational audit logging for every system and officer action</li>
+            <li>Relational MySQL persistence ensuring complete recovery across server restarts</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Section 5: Technologies Used -->
+      <div class="panel" style="margin-bottom: var(--space-4);">
+        <div class="panel-header">
+          <h2 class="panel-title">Technologies Used</h2>
+        </div>
+        <div class="panel-body" style="font-size: 12px; line-height: 1.6; font-family: var(--font-mono);">
+          <ul style="margin-left: 20px; display: flex; flex-direction: column; gap: 6px;">
+            <li><strong>Core Language:</strong> Java with basic object-oriented programming (encapsulation, inheritance, polymorphism)</li>
+            <li><strong>Data Structures:</strong> Weighted Graph (adjacency list), Min-Heap PriorityQueue, HashMap, ArrayList, HashSet</li>
+            <li><strong>Algorithms:</strong> Breadth-First Search (BFS), Depth-First Search (DFS), Dijkstra's Shortest Path Algorithm</li>
+            <li><strong>Database &amp; Connectivity:</strong> MySQL 8, JDBC with PreparedStatements and atomic transactions</li>
+            <li><strong>Frontend:</strong> Semantic HTML5, Vanilla CSS (CSS variables, flexbox, grid), Vanilla JavaScript (zero external dependencies, 100% offline)</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Section 6: Sustainable Development Goals -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Sustainable Development Goals (SDG) Alignment</h2>
+        </div>
+        <div class="panel-body" style="font-size: 12px; line-height: 1.6;">
+          <div style="margin-bottom: 12px;">
+            <strong>SDG 3 (Good Health and Well-Being):</strong> Rapid medical and trauma supply dispatch within minutes, preventing secondary infections and post-disaster morbidity.
+          </div>
+          <div style="margin-bottom: 12px;">
+            <strong>SDG 9 (Industry, Innovation &amp; Infrastructure):</strong> Dynamic graph algorithms (BFS reachability, Dijkstra shortest paths) adapt instantaneously to bridge and highway closures.
+          </div>
+          <div style="margin-bottom: 12px;">
+            <strong>SDG 11 (Sustainable Cities &amp; Communities):</strong> Shelter overbooking protections and fair, deterministic priority ranking prevent resource hoarding in vulnerable settlements.
+          </div>
+          <div>
+            <strong>SDG 13 (Climate Action):</strong> Pre-positioned inventory allocation minimizes emergency vehicle fuel consumption and carbon footprint during severe cyclone events.
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ============================================================== -->
+  <!-- MODAL: RECOMMENDATION & OFFICER AUTHORIZATION -->
+  <!-- ============================================================== -->
+  <div class="modal-overlay" id="modal-recommendation">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div>
+          <h3 id="rec-modal-title">Algorithmic Allocation Advice</h3>
+          <div id="rec-region-name" style="font-family: var(--font-mono); font-size: 11px; color: #c4d0d6; margin-top: 2px;"></div>
+        </div>
+        <button class="modal-close-btn modal-close" aria-label="Close dialog">[X]</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Route Line -->
+        <div class="rec-route-line" id="rec-route-banner">
+          <!-- Injected by JS -->
+        </div>
+
+        <!-- Side-by-side Request vs Recommended Allocation -->
+        <div class="rec-layout-grid" id="rec-stats-container">
+          <!-- Injected by JS -->
+        </div>
+
+        <!-- System Rationale -->
+        <div class="rec-rationale">
+          <strong>SYSTEM RATIONALE:</strong> <span id="rec-explanation"></span>
+        </div>
+
+        <!-- Human Officer Authorization Panel -->
+        <div class="officer-auth-panel">
+          <div style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 8px;">
+            Officer Decision Authorization (Human-In-The-Loop)
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="officer-name-input">Reviewing Command Officer</label>
+            <input type="text" id="officer-name-input" class="form-input" value="Command Officer" required>
+          </div>
+          <div class="officer-action-row">
+            <button class="btn btn-outline-red" id="btn-reject-allocation">
+              [REJECT REQUEST]
+            </button>
+            <button class="btn btn-primary" id="btn-confirm-allocation">
+              CONFIRM ALLOCATION
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: LOG NEW INCIDENT REPORT -->
+  <div class="modal-overlay" id="modal-new-request">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>Log Incident Report</h3>
+        <button class="modal-close-btn modal-close" aria-label="Close dialog">[X]</button>
+      </div>
+
+      <div class="modal-body">
+        <form id="form-new-request">
+          <div class="form-group">
+            <label class="form-label" for="new-req-region">Affected Region</label>
+            <select id="new-req-region" class="form-input region-select" required>
+              <!-- Populated by JS -->
+            </select>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="new-req-severity">Severity Rating</label>
+              <select id="new-req-severity" class="form-input" required>
+                <option value="5">5 - Critical Catastrophe / Life Threatening</option>
+                <option value="4">4 - High Severe Disaster</option>
+                <option value="3" selected>3 - Moderate Storm Damage</option>
+                <option value="2">2 - Minor Waterlogging</option>
+                <option value="1">1 - Advisory / Low Alert</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="new-req-population">Affected Population (&gt; 0)</label>
+              <input type="number" id="new-req-population" class="form-input" min="1" value="1200" required>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="new-req-type">Request Category</label>
+              <select id="new-req-type" class="form-input" required>
+                <option value="SUPPLY" selected>SUPPLY (Food &amp; Medicine Kits)</option>
+                <option value="RESCUE">RESCUE (Rescue Teams &amp; Shelters)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="new-req-officer">Reporting Field Officer</label>
+              <input type="text" id="new-req-officer" class="form-input" value="Field Officer" required>
+            </div>
+          </div>
+
+          <!-- Supply fields -->
+          <div class="form-row" id="new-supply-fields">
+            <div class="form-group">
+              <label class="form-label" for="new-req-food">Requested Food Kits</label>
+              <input type="number" id="new-req-food" class="form-input" min="0" value="80">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="new-req-med">Requested Medicine Kits</label>
+              <input type="number" id="new-req-med" class="form-input" min="0" value="40">
+            </div>
+          </div>
+
+          <!-- Rescue fields -->
+          <div class="form-row" id="new-rescue-fields" style="display: none;">
+            <div class="form-group">
+              <label class="form-label" for="new-req-teams">Requested Teams</label>
+              <input type="number" id="new-req-teams" class="form-input" min="0" value="1">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="new-req-shelter">Requested Shelter Places</label>
+              <input type="number" id="new-req-shelter" class="form-input" min="0" value="60">
+            </div>
+          </div>
+
+          <div class="officer-action-row" style="margin-top: 14px;">
+            <button type="button" class="btn btn-outline modal-close">[CANCEL]</button>
+            <button type="submit" class="btn btn-primary">SUBMIT REPORT TO QUEUE</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: EDIT REQUEST -->
+  <div class="modal-overlay" id="modal-edit-request">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>Edit Incident Report</h3>
+        <button class="modal-close-btn modal-close" aria-label="Close dialog">[X]</button>
+      </div>
+
+      <div class="modal-body">
+        <form id="form-edit-request">
+          <input type="hidden" id="edit-req-id">
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="edit-req-severity">Severity Rating</label>
+              <select id="edit-req-severity" class="form-input" required>
+                <option value="5">5 - Critical Catastrophe</option>
+                <option value="4">4 - High Severe Disaster</option>
+                <option value="3">3 - Moderate Damage</option>
+                <option value="2">2 - Minor Warning</option>
+                <option value="1">1 - Advisory</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="edit-req-population">Affected Population</label>
+              <input type="number" id="edit-req-population" class="form-input" min="1" required>
+            </div>
+          </div>
+
+          <div class="form-row" id="edit-supply-fields">
+            <div class="form-group">
+              <label class="form-label" for="edit-req-food">Requested Food Kits</label>
+              <input type="number" id="edit-req-food" class="form-input" min="0">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="edit-req-med">Requested Medicine Kits</label>
+              <input type="number" id="edit-req-med" class="form-input" min="0">
+            </div>
+          </div>
+
+          <div class="form-row" id="edit-rescue-fields" style="display: none;">
+            <div class="form-group">
+              <label class="form-label" for="edit-req-teams">Requested Teams</label>
+              <input type="number" id="edit-req-teams" class="form-input" min="0">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="edit-req-shelter">Requested Shelter Places</label>
+              <input type="number" id="edit-req-shelter" class="form-input" min="0">
+            </div>
+          </div>
+
+          <div class="officer-action-row" style="margin-top: 14px;">
+            <button type="button" class="btn btn-outline modal-close">[CANCEL]</button>
+            <button type="submit" class="btn btn-primary">SAVE &amp; RE-PRIORITIZE</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: DEPOT STOCK INVENTORY -->
+  <div class="modal-overlay" id="modal-stock">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="stock-depot-title">Update Depot Stock</h3>
+        <button class="modal-close-btn modal-close" aria-label="Close dialog">[X]</button>
+      </div>
+
+      <div class="modal-body">
+        <form id="form-stock">
+          <input type="hidden" id="stock-depot-id">
+
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px;">
+              <input type="checkbox" id="stock-is-add" style="width: 14px; height: 14px;">
+              <span>INCREMENT MODE (Add to existing stock instead of overwriting)</span>
+            </label>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="stock-food">Food Kits Count</label>
+              <input type="number" id="stock-food" class="form-input" min="0" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="stock-med">Medicine Kits Count</label>
+              <input type="number" id="stock-med" class="form-input" min="0" required>
+            </div>
+          </div>
+
+          <div class="officer-action-row" style="margin-top: 14px;">
+            <button type="button" class="btn btn-outline modal-close">[CANCEL]</button>
+            <button type="submit" class="btn btn-primary">COMMIT INVENTORY UPDATE</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: SHELTER CAPACITY -->
+  <div class="modal-overlay" id="modal-shelter">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="shelter-title">Modify Shelter Capacity</h3>
+        <button class="modal-close-btn modal-close" aria-label="Close dialog">[X]</button>
+      </div>
+
+      <div class="modal-body">
+        <form id="form-shelter">
+          <input type="hidden" id="shelter-id">
+
+          <div class="form-group">
+            <label class="form-label" for="shelter-capacity">Total Accommodation Capacity</label>
+            <input type="number" id="shelter-capacity" class="form-input" min="1" required>
+          </div>
+
+          <div class="officer-action-row" style="margin-top: 14px;">
+            <button type="button" class="btn btn-outline modal-close">[CANCEL]</button>
+            <button type="submit" class="btn btn-primary">SAVE CAPACITY</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: ADD ROAD EDGE -->
+  <div class="modal-overlay" id="modal-add-road">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>Add Road Graph Connection</h3>
+        <button class="modal-close-btn modal-close" aria-label="Close dialog">[X]</button>
+      </div>
+
+      <div class="modal-body">
+        <form id="form-add-road">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="new-road-from">From Region</label>
+              <select id="new-road-from" class="form-input region-select" required>
+                <!-- Populated by JS -->
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="new-road-to">To Region</label>
+              <select id="new-road-to" class="form-input region-select" required>
+                <!-- Populated by JS -->
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="new-road-time">Travel Time (Minutes &gt; 0)</label>
+              <input type="number" id="new-road-time" class="form-input" min="1" value="25" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Initial Road Status</label>
+              <label style="display: flex; align-items: center; gap: 8px; margin-top: 6px; font-family: var(--font-mono); font-size: 11px;">
+                <input type="checkbox" id="new-road-open" checked style="width: 14px; height: 14px;">
+                <span>Road is currently OPEN and passable</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="new-road-desc">Highway Name / Route Description</label>
+            <input type="text" id="new-road-desc" class="form-input" value="State Highway Link" required>
+          </div>
+
+          <div class="officer-action-row" style="margin-top: 14px;">
+            <button type="button" class="btn btn-outline modal-close">[CANCEL]</button>
+            <button type="submit" class="btn btn-primary">ADD ROAD TO NETWORK</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Stack -->
+  <div class="toast-container" id="toast-container" aria-live="polite"></div>
+
+  <!-- Utilitarian Console Footer -->
+  <footer class="console-footer">
+    <div class="footer-neutral">
+      Aruvi District Emergency Operations Console &bull; Disaster Management Resource Allocation System
+    </div>
+  </footer>
+
+  <!-- Application Logic -->
+  <script src="js/map.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

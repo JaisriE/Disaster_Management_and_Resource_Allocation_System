@@ -1,0 +1,16 @@
+# Disaster Management Resource Allocation System
+# Git Ignore Rules
+
+# Database Credentials
+db.properties
+
+# Compiled Bytecode
+bin/
+*.class
+
+# IDE and System Files
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
