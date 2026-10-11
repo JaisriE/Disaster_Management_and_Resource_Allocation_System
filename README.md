@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Disaster Management Resource Allocation System
 **Aruvi District Emergency Command Operations**  
 **Course:** 24GEP31 - Mini Project (Second Review)  
@@ -188,3 +189,6 @@ http://localhost:8080/index.html
 | `POST` | `/api/allocation/reject` | Officer rejection with mandatory justification. |
 | `GET` | `/api/allocations` | Complete log of confirmed allocations. |
 | `GET` | `/api/audits` | Operational audit trail. |
+=======
+# Disaster_Management_and_Resource_Allocation_System
+>>>>>>> b374ae0ee6b1c7952136bbccabe32877f5631fcf
